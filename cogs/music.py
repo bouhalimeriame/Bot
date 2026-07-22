@@ -67,24 +67,46 @@ class MusicCog(commands.Cog, name="Musique"):
             return None
 
     async def extract_spotify_info(self, url: str) -> Optional[Dict]:
-        """Extrait les informations d'un lien Spotify"""
+        """Extrait les informations d'un lien Spotify (Official oEmbed + OpenGraph)"""
         try:
             clean_url = url.split('?')[0]
             async with aiohttp.ClientSession() as session:
-                api_url = f"https://api.spotifydown.com/metadata/{clean_url}"
-                headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
-                async with session.get(api_url, headers=headers) as response:
+                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                
+                # 1. API officielle Spotify oEmbed
+                oembed_url = f"https://open.spotify.com/oembed?url={clean_url}"
+                async with session.get(oembed_url, headers=headers) as response:
                     if response.status == 200:
                         data = await response.json()
-                        if data and data.get('success'):
-                            title = data.get('title', '')
-                            artist = data.get('artists', [''])[0]
+                        if data and 'title' in data:
+                            track_title = data.get('title', '')
+                            thumbnail = data.get('thumbnail_url', '')
+                            
+                            # 2. Extraction du nom de l'artiste via la description OpenGraph
+                            artist_name = ""
+                            try:
+                                async with session.get(clean_url, headers=headers) as page_res:
+                                    if page_res.status == 200:
+                                        html = await page_res.text()
+                                        import re
+                                        desc_match = re.search(r'<meta property="og:description" content="([^"]+)"', html)
+                                        if desc_match:
+                                            desc_text = desc_match.group(1)
+                                            parts = [p.strip() for p in desc_text.replace('·', '•').split('•')]
+                                            if len(parts) >= 2:
+                                                artist_name = parts[0]
+                            except Exception as e:
+                                print(f"Erreur extraction artiste Spotify: {e}")
+
+                            full_title = f"{track_title} - {artist_name}" if artist_name else track_title
+                            search_query = f"{track_title} {artist_name} audio" if artist_name else f"{track_title} audio"
+
                             return {
-                                'title': f"{title} - {artist}",
-                                'query': f"{title} {artist} audio",
-                                'thumbnail': data.get('cover', ''),
-                                'artist': artist,
-                                'album': data.get('album', '')
+                                'title': full_title,
+                                'query': search_query,
+                                'thumbnail': thumbnail,
+                                'artist': artist_name or "Spotify",
+                                'album': ""
                             }
             return None
         except Exception as e:
