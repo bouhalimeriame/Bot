@@ -1,0 +1,8 @@
+[providers]
+providers = ["python"]
+
+[variables]
+PYTHON_VERSION = "3.12"
+
+[phases.setup]
+nixPkgs = ["ffmpeg", "libsodium"]
