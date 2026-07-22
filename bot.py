@@ -109,8 +109,13 @@ class RymBot(commands.Bot):
                 owner_id = room['owner_id']
                 channel = self.get_channel(room_id)
                 if channel and isinstance(channel, discord.VoiceChannel):
-                    self.temp_channels[room_id] = owner_id
-                    logger.info(f"🔑 Room restaurée: {channel.name} (Propriétaire: {owner_id})")
+                    # Supprimer immédiatement les rooms vides restantes après un redémarrage
+                    if len(channel.members) == 0:
+                        logger.info(f"🗑️ Room vide supprimée au redémarrage: {channel.name}")
+                        await self.delete_temp_room(channel)
+                    else:
+                        self.temp_channels[room_id] = owner_id
+                        logger.info(f"🔑 Room restaurée: {channel.name} (Propriétaire: {owner_id})")
                 else:
                     await self.db.remove_room(room_id)
         except Exception as e:
@@ -135,40 +140,49 @@ class RymBot(commands.Bot):
         """Gestion des salons vocaux temporaires"""
         if member.bot:
             return
+
+        # Ignorer les events où le salon ne change pas (mute, deafen, stream...)
+        if before.channel == after.channel:
+            return
             
         try:
+            guild = member.guild
             # Salon générateur "Join der dark"
-            create_room = discord.utils.get(member.guild.voice_channels, name="Join der dark")
+            create_room = discord.utils.get(guild.voice_channels, name="Join der dark")
             
             if not create_room:
                 try:
-                    create_room = await member.guild.create_voice_channel(
+                    create_room = await guild.create_voice_channel(
                         name="Join der dark",
                         reason="Création automatique du salon générateur"
                     )
                 except Exception:
                     return
             
-            # 1. Le membre rejoint le salon générateur
+            # 1. Le membre rejoint le salon générateur → créer sa room
             if after.channel and after.channel.id == create_room.id:
                 await self.create_temp_room(member)
             
-            # 2. Le membre quitte une room temporaire
+            # 2. Le membre quitte un salon (before.channel != after.channel garanti)
             if before.channel and before.channel.id in self.temp_channels:
                 temp_chan = before.channel
-                if len(temp_chan.members) == 0:
+                # Vérifier l'état réel du salon (exclure les bots)
+                real_members = [m for m in temp_chan.members if not m.bot]
+                if len(real_members) == 0:
+                    logger.info(f"🗑️ Room vide, suppression: {temp_chan.name}")
                     await self.delete_temp_room(temp_chan)
                 else:
+                    # Transférer la propriété si le propriétaire est parti
                     owner_id = self.temp_channels.get(temp_chan.id)
                     if owner_id == member.id:
-                        new_owner = temp_chan.members[0]
+                        new_owner = real_members[0]
                         self.temp_channels[temp_chan.id] = new_owner.id
                         await self.db.update_room_owner(temp_chan.id, new_owner.id)
-                        
+                        logger.info(f"🔑 Propriété transférée à {new_owner.display_name} dans {temp_chan.name}")
                         embed = EmbedFactory.info(
                             "Nouveau Propriétaire",
                             f"🔑 {new_owner.mention} est désormais le propriétaire de ce salon vocal.",
-                            guild=member.guild
+                            guild=guild
                         )
                         try:
                             await temp_chan.send(embed=embed)
@@ -179,8 +193,9 @@ class RymBot(commands.Bot):
 
     async def create_temp_room(self, member: discord.Member):
         """Création d'une room temporaire avec un design visuel d'exception"""
+        guild = member.guild
+        channel = None
         try:
-            guild = member.guild
             category = member.voice.channel.category if member.voice else None
             
             room_name = f"🔊 Room de {member.display_name}"
@@ -189,32 +204,48 @@ class RymBot(commands.Bot):
                 category=category,
                 reason=f"Room temporaire pour {member.display_name}"
             )
-            
-            await member.move_to(channel)
+
+            # Enregistrer dans temp_channels AVANT move_to pour éviter
+            # une race condition où on_voice_state_update se déclenche
+            # pendant le move_to et ne trouve pas la room dans temp_channels
             await self.db.add_room(channel.id, member.id)
             self.temp_channels[channel.id] = member.id
+            logger.info(f"✅ Room temporaire créée: {channel.name} pour {member.display_name}")
+
+            await member.move_to(channel)
             
-            avatar_url = member.display_avatar.url if hasattr(member, 'display_avatar') else member.avatar.url
-            
-            # Embed haut de gamme inspiré du design néon violet
+        except Exception as e:
+            logger.error(f"Erreur lors de la création de la room: {e}")
+            # Nettoyage si le channel a été créé mais que le move_to a échoué
+            if channel:
+                self.temp_channels.pop(channel.id, None)
+                try:
+                    await self.db.remove_room(channel.id)
+                    await channel.delete(reason="Échec de création de room temporaire")
+                except Exception:
+                    pass
+            return
+
+        # Envoi de l'embed de bienvenue — séparé pour ne pas bloquer la création
+        try:
+            avatar_url = member.display_avatar.url
             embed = EmbedFactory.build(
-                title=f"🎉 Bienvenue dans",
+                title="🎉 Bienvenue dans",
                 description=(
                     f"# **Room de {member.display_name}**\n"
                     f"### ✨ *Ton salon vocal temporaire*\n\n"
                     f"👤 {member.mention}\n\n"
                     f"```\nℹ️ Utilise les boutons ci-dessous ou les commandes .help / /help pour gérer ton salon.\n```"
                 ),
-                color=discord.Color.from_rgb(157, 78, 221),  # Violet Néon Vif #9D4EDD
+                color=discord.Color.from_rgb(157, 78, 221),
                 thumbnail_url=avatar_url,
                 guild=guild,
                 footer_text="RymBot • Bot Discord Professionnel"
             )
             view = VoiceRoomControlView()
             await channel.send(embed=embed, view=view)
-            
         except Exception as e:
-            logger.error(f"Erreur lors de la création de la room: {e}")
+            logger.warning(f"⚠️ Impossible d'envoyer l'embed dans la room vocale: {e}")
 
     async def delete_temp_room(self, channel: discord.VoiceChannel):
         """Suppression propre d'une room temporaire vide"""
