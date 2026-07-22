@@ -83,6 +83,14 @@ class ErrorsCog(commands.Cog, name="Erreurs"):
             )
             return await ctx.send(embed=embed)
 
+        elif isinstance(error, (RuntimeError, discord.ClientException)):
+            embed = EmbedFactory.error(
+                "Erreur Salon Vocal",
+                f"❌ Problème de connexion vocale : {str(error)}",
+                guild=guild
+            )
+            return await ctx.send(embed=embed)
+
         else:
             logger.error(f"❌ Erreur non gérée ({ctx.command}): {error}", exc_info=error)
             embed = EmbedFactory.error(
