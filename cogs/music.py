@@ -165,15 +165,32 @@ class MusicCog(commands.Cog, name="Musique"):
         loading_msg = await ctx.send(embed=embed_searching)
 
         song = None
-        if 'spotify.com' in query:
+        is_spotify = 'spotify.com' in query
+
+        if is_spotify:
             spotify_info = await self.extract_spotify_info(query)
             if spotify_info:
+                # Recherche YouTube avec le titre+artiste extrait de Spotify
                 song = await self.search_youtube(spotify_info['query'])
                 if song:
                     song['spotify_info'] = spotify_info
                     song['title'] = spotify_info['title']
-
-        if not song:
+                    if spotify_info.get('thumbnail'):
+                        song['thumbnail'] = spotify_info['thumbnail']
+            if not song:
+                # Spotify est protégé par DRM — on n'envoie jamais l'URL Spotify à yt-dlp
+                embed_err = EmbedFactory.error(
+                    "Spotify — Aucun résultat",
+                    "❌ Impossible de récupérer ce morceau Spotify.\n"
+                    "Essaie plutôt de coller le **nom de la chanson et l'artiste** directement.",
+                    guild=ctx.guild
+                )
+                if isinstance(loading_msg, discord.Message):
+                    return await loading_msg.edit(embed=embed_err)
+                else:
+                    return await ctx.send(embed=embed_err)
+        else:
+            # Requête texte ou URL YouTube classique
             song = await self.search_youtube(query)
 
         if not song:
