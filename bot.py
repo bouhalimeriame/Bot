@@ -178,7 +178,7 @@ class RymBot(commands.Bot):
             logger.error(f"Erreur on_voice_state_update bot.py: {e}")
 
     async def create_temp_room(self, member: discord.Member):
-        """Création d'une room temporaire avec panneau d'options interactif"""
+        """Création d'une room temporaire avec un design visuel d'exception"""
         try:
             guild = member.guild
             category = member.voice.channel.category if member.voice else None
@@ -194,16 +194,21 @@ class RymBot(commands.Bot):
             await self.db.add_room(channel.id, member.id)
             self.temp_channels[channel.id] = member.id
             
-            # Envoi du panneau de contrôle d'interface
+            avatar_url = member.display_avatar.url if hasattr(member, 'display_avatar') else member.avatar.url
+            
+            # Embed haut de gamme inspiré du design néon violet
             embed = EmbedFactory.build(
-                title=f"🎉 Room de {member.display_name}",
+                title=f"🎉 Bienvenue dans",
                 description=(
-                    f"Bienvenue dans votre salon vocal temporaire {member.mention} !\n\n"
-                    "Utilisez les boutons ci-dessous ou la commande `.help` / `/help` pour gérer votre salon."
+                    f"# **Room de {member.display_name}**\n"
+                    f"### ✨ *Ton salon vocal temporaire*\n\n"
+                    f"👤 {member.mention}\n\n"
+                    f"```\nℹ️ Utilise les boutons ci-dessous ou les commandes .help / /help pour gérer ton salon.\n```"
                 ),
-                color='voice',
+                color=discord.Color.from_rgb(157, 78, 221),  # Violet Néon Vif #9D4EDD
+                thumbnail_url=avatar_url,
                 guild=guild,
-                author=member
+                footer_text="RymBot • Bot Discord Professionnel"
             )
             view = VoiceRoomControlView()
             await channel.send(embed=embed, view=view)
