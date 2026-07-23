@@ -85,23 +85,27 @@ class RymBot(commands.Bot):
         logger.info("🚀 RymBot prêt à fonctionner !")
 
     async def create_default_channels(self):
-        """Vérifie et crée le salon 'One tap' sur chaque serveur"""
+        """Vérifie et crée le salon '➕・ Join to Create' sur chaque serveur"""
         for guild in self.guilds:
             try:
-                # Si un ancien salon "Join der dark" existe encore, on le renomme
-                old_channel = discord.utils.get(guild.voice_channels, name="Join der dark")
-                if old_channel:
-                    await old_channel.edit(name="One tap", reason="Mise à jour du salon générateur")
-                    logger.info(f"✏️ Salon 'Join der dark' renommé en 'One tap' sur {guild.name}")
+                # Si un ancien salon "➕One tap", "One tap" ou "Join der dark" existe, on le renomme
+                old_channel = (
+                    discord.utils.get(guild.voice_channels, name="➕One tap") or 
+                    discord.utils.get(guild.voice_channels, name="One tap") or 
+                    discord.utils.get(guild.voice_channels, name="Join der dark")
+                )
+                if old_channel and old_channel.name != "➕・ Join to Create":
+                    await old_channel.edit(name="➕・ Join to Create", reason="Mise à jour du nom du salon générateur")
+                    logger.info(f"✏️ Salon renommé en '➕・ Join to Create' sur {guild.name}")
                     continue
 
-                existing = discord.utils.get(guild.voice_channels, name="One tap")
+                existing = discord.utils.get(guild.voice_channels, name="➕・ Join to Create")
                 if not existing:
                     await guild.create_voice_channel(
-                        name="➕One tap",
+                        name="➕・ Join to Create",
                         reason="Salon de création de rooms temporaires RymBot"
                     )
-                    logger.info(f"✅ Salon 'One tap' créé sur {guild.name}")
+                    logger.info(f"✅ Salon '➕・ Join to Create' créé sur {guild.name}")
             except discord.Forbidden:
                 logger.warning(f"⚠️ Permissions insuffisantes sur {guild.name} pour créer le salon vocal.")
             except Exception as e:
@@ -136,7 +140,7 @@ class RymBot(commands.Bot):
         # Statut initial du bot
         activity = discord.Activity(
             type=discord.ActivityType.listening,
-            name=".help | /help 🎵"
+            name=".help | /help 🔊"
         )
         await self.change_presence(activity=activity)
         
@@ -154,13 +158,18 @@ class RymBot(commands.Bot):
             
         try:
             guild = member.guild
-            # Salon générateur "One tap"
-            create_room = discord.utils.get(guild.voice_channels, name="One tap") or discord.utils.get(guild.voice_channels, name="Join der dark")
+            # Salon générateur "➕・ Join to Create"
+            create_room = (
+                discord.utils.get(guild.voice_channels, name="➕・ Join to Create") or 
+                discord.utils.get(guild.voice_channels, name="➕One tap") or 
+                discord.utils.get(guild.voice_channels, name="One tap") or 
+                discord.utils.get(guild.voice_channels, name="Join der dark")
+            )
             
             if not create_room:
                 try:
                     create_room = await guild.create_voice_channel(
-                        name="One tap",
+                        name="➕・ Join to Create",
                         reason="Création automatique du salon générateur"
                     )
                 except Exception:

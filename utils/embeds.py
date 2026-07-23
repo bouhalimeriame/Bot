@@ -4,27 +4,25 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Union
 
 class EmbedFactory:
-    """Générateur centralisé d'embeds modernes et professionnels pour RymBot"""
-    
-    # Couleurs thématiques harmonieuses
+    """Générateur centralisé d'embeds ultra-modernes et haut de gamme pour RymBot"""
+
+    # Palette de couleurs néon/sombre hautement contrastée et élégante
     COLORS = {
-        'primary': discord.Color.from_rgb(88, 101, 242),     # Blurple Discord
-        'success': discord.Color.from_rgb(87, 242, 135),     # Vert vif
-        'error': discord.Color.from_rgb(237, 66, 69),       # Rouge corail
-        'warning': discord.Color.from_rgb(254, 231, 92),     # Jaune soleil
-        'info': discord.Color.from_rgb(52, 152, 219),       # Bleu ciel
-        'music': discord.Color.from_rgb(155, 89, 182),      # Violet
-        'voice': discord.Color.from_rgb(46, 204, 113),      # Émeraude
-        'dark': discord.Color.from_rgb(43, 45, 49)          # Sombre élégant
+        'primary': discord.Color.from_rgb(99, 102, 241),      # Indigo Néon
+        'success': discord.Color.from_rgb(0, 230, 153),      # Émeraude Néon
+        'error': discord.Color.from_rgb(255, 64, 96),        # Corail Vif
+        'warning': discord.Color.from_rgb(255, 179, 0),      # Ambre Doré
+        'info': discord.Color.from_rgb(0, 191, 255),        # Bleu Électrique
+        'voice': discord.Color.from_rgb(157, 78, 221),       # Violet Lumineux
+        'dark': discord.Color.from_rgb(30, 31, 35)           # Sombre Épuré
     }
-    
-    # Emojis principaux
+
+    # Emojis stylisés
     EMOJIS = {
-        'success': '✅',
-        'error': '❌',
+        'success': '✨',
+        'error': '🚨',
         'warning': '⚠️',
-        'info': 'ℹ️',
-        'music': '🎵',
+        'info': '💡',
         'voice': '🔊',
         'voice_off': '🔇',
         'voice_switch': '➡️',
@@ -43,7 +41,7 @@ class EmbedFactory:
         color: Optional[Union[discord.Color, int, str]] = None,
         author: Optional[Union[discord.Member, discord.User, str]] = None,
         author_icon: Optional[str] = None,
-        footer_text: Optional[str] = "RymBot • Bot Discord Professionnel",
+        footer_text: Optional[str] = "RymBot • Developped by Naythan",
         footer_icon: Optional[str] = None,
         thumbnail_url: Optional[str] = None,
         image_url: Optional[str] = None,
@@ -52,8 +50,8 @@ class EmbedFactory:
         guild: Optional[discord.Guild] = None,
         bot_user: Optional[discord.User] = None
     ) -> discord.Embed:
-        """Construit un embed Discord standardisé et hautement stylisé"""
-        
+        """Construit un embed Discord ultra-soigné au design moderne"""
+
         # Résolution de la couleur
         if isinstance(color, str):
             if color.startswith('#'):
@@ -67,16 +65,16 @@ class EmbedFactory:
             color_obj = color
         else:
             color_obj = EmbedFactory.COLORS['primary']
-            
+
         embed = discord.Embed(
             title=title,
             description=description,
             color=color_obj
         )
-        
+
         if timestamp:
             embed.timestamp = datetime.now(timezone.utc)
-            
+
         # Configuration de l'auteur
         if author:
             if isinstance(author, (discord.Member, discord.User)):
@@ -85,23 +83,23 @@ class EmbedFactory:
                 embed.set_author(name=author_name, icon_url=author_icon or author_avatar)
             else:
                 embed.set_author(name=str(author), icon_url=author_icon)
-                
+
         # Configuration du Footer et de l'icône de guilde/bot
         footer_icon_final = footer_icon
         if not footer_icon_final and guild and guild.icon:
             footer_icon_final = guild.icon.url
         elif not footer_icon_final and bot_user and bot_user.display_avatar:
             footer_icon_final = bot_user.display_avatar.url
-            
+
         if footer_text:
             embed.set_footer(text=footer_text, icon_url=footer_icon_final)
-            
+
         if thumbnail_url:
             embed.set_thumbnail(url=thumbnail_url)
-            
+
         if image_url:
             embed.set_image(url=image_url)
-            
+
         if fields:
             for f in fields:
                 embed.add_field(
@@ -109,29 +107,29 @@ class EmbedFactory:
                     value=f.get('value', '\u200b'),
                     inline=f.get('inline', False)
                 )
-                
+
         return embed
 
     @staticmethod
     def success(title: str, description: str, **kwargs) -> discord.Embed:
-        """Embed de succès"""
-        full_title = f"{EmbedFactory.EMOJIS['success']} {title}" if not title.startswith('✅') else title
+        """Embed de succès moderne"""
+        full_title = f"{EmbedFactory.EMOJIS['success']} {title}" if not any(title.startswith(e) for e in ['✨', '✅']) else title
         return EmbedFactory.build(title=full_title, description=description, color='success', **kwargs)
 
     @staticmethod
     def error(title: str, description: str, **kwargs) -> discord.Embed:
-        """Embed d'erreur"""
-        full_title = f"{EmbedFactory.EMOJIS['error']} {title}" if not title.startswith('❌') else title
+        """Embed d'erreur moderne"""
+        full_title = f"{EmbedFactory.EMOJIS['error']} {title}" if not any(title.startswith(e) for e in ['🚨', '❌']) else title
         return EmbedFactory.build(title=full_title, description=description, color='error', **kwargs)
 
     @staticmethod
     def warning(title: str, description: str, **kwargs) -> discord.Embed:
-        """Embed d'avertissement"""
+        """Embed d'avertissement moderne"""
         full_title = f"{EmbedFactory.EMOJIS['warning']} {title}" if not title.startswith('⚠️') else title
         return EmbedFactory.build(title=full_title, description=description, color='warning', **kwargs)
 
     @staticmethod
     def info(title: str, description: str, **kwargs) -> discord.Embed:
-        """Embed d'information"""
-        full_title = f"{EmbedFactory.EMOJIS['info']} {title}" if not title.startswith('ℹ️') else title
+        """Embed d'information moderne"""
+        full_title = f"{EmbedFactory.EMOJIS['info']} {title}" if not any(title.startswith(e) for e in ['💡', 'ℹ️']) else title
         return EmbedFactory.build(title=full_title, description=description, color='info', **kwargs)

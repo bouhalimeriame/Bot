@@ -17,7 +17,6 @@ class HelpCog(commands.Cog, name="Aide"):
         guild = ctx.guild
         
         fields = [
-            {'name': "🎵 Musique", 'value': "Commandes de lecture audio YouTube/Spotify, file d'attente et contrôle.", 'inline': True},
             {'name': "🔊 Voice", 'value': "Gestion des salons vocaux temporaires personnels.", 'inline': True},
             {'name': "🛡️ Modération", 'value': "Outils de modération (kick, ban, mute, purge).", 'inline': True},
             {'name': "⚙️ Administration", 'value': "Configuration du serveur (welcome, logs, roles).", 'inline': True},

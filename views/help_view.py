@@ -9,12 +9,6 @@ class HelpCategorySelect(discord.ui.Select):
         self.bot = bot
         options = [
             discord.SelectOption(
-                label="Musique",
-                description="Commandes de lecture musicale YouTube/Spotify",
-                emoji="🎵",
-                value="music"
-            ),
-            discord.SelectOption(
                 label="Voice",
                 description="Gestion des rooms vocales temporaires",
                 emoji="🔊",
@@ -51,33 +45,14 @@ class HelpCategorySelect(discord.ui.Select):
         category = self.values[0]
         prefix = "."
         
-        if category == "music":
-            embed = EmbedFactory.build(
-                title="🎵 Catégorie: Musique",
-                description="Toutes les commandes pour écouter de la musique en salon vocal :",
-                color='music',
-                fields=[
-                    {'name': f"`{prefix}play` / `/play <nom ou URL>`", 'value': "Recherche et joue une vidéo YouTube ou lien Spotify.", 'inline': False},
-                    {'name': f"`{prefix}pause` / `/pause`", 'value': "Met en pause la chanson actuelle.", 'inline': True},
-                    {'name': f"`{prefix}resume` / `/resume`", 'value': "Reprend la lecture en pause.", 'inline': True},
-                    {'name': f"`{prefix}skip` / `/skip`", 'value': "Passe à la chanson suivante dans la file d'attente.", 'inline': True},
-                    {'name': f"`{prefix}stop` / `/stop`", 'value': "Arrête la musique et vide la file d'attente.", 'inline': True},
-                    {'name': f"`{prefix}queue` / `/queue`", 'value': "Affiche les 10 prochaines musiques.", 'inline': True},
-                    {'name': f"`{prefix}nowplaying` / `/nowplaying`", 'value': "Affiche la pochette et les infos du morceau en cours.", 'inline': True},
-                    {'name': f"`{prefix}loop` / `/loop`", 'value': "Active ou désactive la répétition du morceau.", 'inline': True},
-                    {'name': f"`{prefix}volume` / `/volume <0-100>`", 'value': "Ajuste le volume d'écoute du bot.", 'inline': True},
-                    {'name': f"`{prefix}shuffle` / `/shuffle`", 'value': "Mélange aléatoirement la file d'attente.", 'inline': True}
-                ],
-                guild=interaction.guild,
-                bot_user=self.bot.user
-            )
-        elif category == "voice":
+        if category == "voice":
             embed = EmbedFactory.build(
                 title="🔊 Catégorie: Salons Vocaux Temporaires",
                 description="Gérez votre room temporaire personnelle :",
                 color='voice',
                 fields=[
-                    {'name': f"`{prefix}der <nombre>`", 'value': "Définit le nombre max de membres dans la room (1-99).", 'inline': False},
+                    {'name': f"`{prefix}aji <@user|ID|nom>` / `/aji`", 'value': "Déplace un membre dans votre salon vocal.", 'inline': False},
+                    {'name': f"`{prefix}limit <nombre>`", 'value': "Définit la limite de membres dans la room (1-99).", 'inline': True},
                     {'name': f"`{prefix}lock` / `{prefix}unlock`", 'value': "Verrouille ou déverrouille l'accès au salon.", 'inline': True},
                     {'name': f"`{prefix}private` / `{prefix}public`", 'value': "Masque ou affiche le salon dans la liste des vocaux.", 'inline': True},
                     {'name': f"`{prefix}rename <nom>`", 'value': "Renomme le salon vocal.", 'inline': True},
