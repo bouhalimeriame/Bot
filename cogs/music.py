@@ -62,15 +62,14 @@ class MusicCog(commands.Cog, name="Musique"):
             'default_search': 'ytsearch',
             'source_address': '0.0.0.0',
             'nocheckcertificate': True,
-            'noplaylist': True,
             'cachedir': False,
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['ios', 'android', 'mweb', 'web']
+                    'player_client': ['android', 'mweb', 'web']
                 }
             },
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1',
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.5',
             }
@@ -92,7 +91,7 @@ class MusicCog(commands.Cog, name="Musique"):
             if query.startswith(('http://', 'https://')):
                 search_query = query
             else:
-                search_query = f"ytsearch:{query}"
+                search_query = f"ytsearch5:{query}"
 
             data = await loop.run_in_executor(
                 None, lambda: self.ytdl.extract_info(search_query, download=False)
@@ -105,7 +104,7 @@ class MusicCog(commands.Cog, name="Musique"):
             if isinstance(data, dict):
                 if 'entries' in data:
                     # Filtre rigoureux contre les éléments None générés par ignoreerrors
-                    entries = [e for e in data['entries'] if isinstance(e, dict)]
+                    entries = [e for e in data['entries'] if isinstance(e, dict) and (e.get('title') or e.get('url'))]
                     if not entries:
                         return {'success': False, 'data': None, 'error_type': 'not_found', 'error_msg': "Aucun résultat valide trouvé dans la recherche."}
                     entry = entries[0]
