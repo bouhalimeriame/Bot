@@ -55,7 +55,7 @@ class MusicCog(commands.Cog, name="Musique"):
         cookie_file = get_cookies_path()
 
         self.ytdl_opts: Dict[str, Any] = {
-            'format': 'bestaudio/best',
+            'format': 'bestaudio/best/18/worst',
             'quiet': True,
             'no_warnings': True,
             'ignoreerrors': True,
