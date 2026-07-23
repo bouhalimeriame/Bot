@@ -82,87 +82,111 @@ class MusicCog(commands.Cog, name="Musique"):
 
     async def search_youtube(self, query: str) -> Dict[str, Any]:
         """
-        Recherche une vidéo ou un lien sur YouTube avec gestion stricte d'erreurs.
-        Garantit de ne jamais lever 'NoneType' object has no attribute 'get'.
+        Recherche une vidéo ou un lien sur YouTube avec gestion d'erreurs avancée.
+        Combine scraping HTML direct + extraction yt-dlp pour contourner les blocages d'API sur les datacenters.
         """
         try:
             loop = asyncio.get_event_loop()
+            urls_to_try = []
 
             if query.startswith(('http://', 'https://')):
-                search_query = query
+                urls_to_try.append(query)
             else:
-                search_query = f"ytsearch5:{query}"
+                # 1. Tenter le scraping HTML direct pour obtenir les Video IDs sans passer par l'API InnerTube bloquée
+                try:
+                    import urllib.parse
+                    search_url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}"
+                    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(search_url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                            if resp.status == 200:
+                                html = await resp.text()
+                                vids = list(dict.fromkeys(re.findall(r'/watch\?v=([a-zA-Z0-9_-]{11})', html)))
+                                for v_id in vids[:3]:
+                                    urls_to_try.append(f"https://www.youtube.com/watch?v={v_id}")
+                except Exception as scrape_err:
+                    logger.warning(f"Échec scraping HTML YouTube search: {scrape_err}")
 
-            data = await loop.run_in_executor(
-                None, lambda: self.ytdl.extract_info(search_query, download=False)
-            )
+                # 2. Secours classique via ytsearch5 si le scraping n'a rien donné
+                if not urls_to_try:
+                    urls_to_try.append(f"ytsearch5:{query}")
 
-            if not data:
-                return {'success': False, 'data': None, 'error_type': 'not_found', 'error_msg': "Aucune donnée retournée par YouTube."}
+            last_error_msg = None
+            for search_target in urls_to_try:
+                try:
+                    data = await loop.run_in_executor(
+                        None, lambda target=search_target: self.ytdl.extract_info(target, download=False)
+                    )
 
-            entry = None
-            if isinstance(data, dict):
-                if 'entries' in data:
-                    # Filtre rigoureux contre les éléments None générés par ignoreerrors
-                    entries = [e for e in data['entries'] if isinstance(e, dict) and (e.get('title') or e.get('url'))]
-                    if not entries:
-                        return {'success': False, 'data': None, 'error_type': 'not_found', 'error_msg': "Aucun résultat valide trouvé dans la recherche."}
-                    entry = entries[0]
-                else:
-                    entry = data
+                    if not data:
+                        continue
 
-            if not entry or not isinstance(entry, dict):
-                return {'success': False, 'data': None, 'error_type': 'not_found', 'error_msg': "Format de résultat invalide."}
+                    entry = None
+                    if isinstance(data, dict):
+                        if 'entries' in data:
+                            entries = [e for e in data['entries'] if isinstance(e, dict) and (e.get('title') or e.get('url'))]
+                            if entries:
+                                entry = entries[0]
+                        else:
+                            entry = data
 
-            # Extraction sécurisée des champs sans risque d'erreur NoneType
-            title = entry.get('title') or 'Titre Inconnu'
-            webpage_url = entry.get('webpage_url') or entry.get('url') or query
+                    if not entry or not isinstance(entry, dict):
+                        continue
 
-            audio_url = entry.get('url')
-            if not audio_url and 'formats' in entry and isinstance(entry['formats'], list):
-                formats = [f for f in entry['formats'] if isinstance(f, dict) and f.get('acodec') != 'none' and f.get('url')]
-                if formats:
-                    best_format = max(formats, key=lambda f: f.get('abr') or f.get('tbr') or 0)
-                    audio_url = best_format.get('url')
+                    title = entry.get('title') or 'Titre Inconnu'
+                    webpage_url = entry.get('webpage_url') or entry.get('url') or query
 
-            if not audio_url:
-                audio_url = webpage_url
+                    audio_url = entry.get('url')
+                    if not audio_url and 'formats' in entry and isinstance(entry['formats'], list):
+                        formats = [f for f in entry['formats'] if isinstance(f, dict) and f.get('acodec') != 'none' and f.get('url')]
+                        if formats:
+                            best_format = max(formats, key=lambda f: f.get('abr') or f.get('tbr') or 0)
+                            audio_url = best_format.get('url')
 
-            duration = entry.get('duration') or 0
+                    if not audio_url:
+                        audio_url = webpage_url
 
-            thumbnail = entry.get('thumbnail') or ''
-            if not thumbnail and entry.get('thumbnails') and isinstance(entry['thumbnails'], list):
-                valid_thumbs = [t for t in entry['thumbnails'] if isinstance(t, dict) and t.get('url')]
-                if valid_thumbs:
-                    thumbnail = valid_thumbs[-1]['url']
+                    duration = entry.get('duration') or 0
+                    thumbnail = entry.get('thumbnail') or ''
+                    if not thumbnail and entry.get('thumbnails') and isinstance(entry['thumbnails'], list):
+                        valid_thumbs = [t for t in entry['thumbnails'] if isinstance(t, dict) and t.get('url')]
+                        if valid_thumbs:
+                            thumbnail = valid_thumbs[-1]['url']
 
-            uploader = entry.get('uploader') or entry.get('channel') or 'Artiste Inconnu'
+                    uploader = entry.get('uploader') or entry.get('channel') or 'Artiste Inconnu'
 
-            song_info = {
-                'title': title,
-                'url': webpage_url,
-                'audio_url': audio_url,
-                'duration': duration,
-                'thumbnail': thumbnail,
-                'uploader': uploader,
-                'source': 'youtube'
-            }
+                    song_info = {
+                        'title': title,
+                        'url': webpage_url,
+                        'audio_url': audio_url,
+                        'duration': duration,
+                        'thumbnail': thumbnail,
+                        'uploader': uploader,
+                        'source': 'youtube'
+                    }
 
-            return {'success': True, 'data': song_info, 'error_type': None, 'error_msg': None}
+                    return {'success': True, 'data': song_info, 'error_type': None, 'error_msg': None}
 
-        except yt_dlp.utils.DownloadError as e:
-            err_str = str(e)
-            logger.error(f"DownloadError YouTube: {err_str}")
-            if "Sign in to confirm" in err_str or "bot" in err_str.lower():
+                except yt_dlp.utils.DownloadError as e:
+                    err_str = str(e)
+                    logger.error(f"DownloadError sur {search_target}: {err_str}")
+                    if "Sign in to confirm" in err_str or "bot" in err_str.lower():
+                        last_error_msg = "Sign in to confirm you're not a bot."
+                    else:
+                        last_error_msg = err_str
+
+            if last_error_msg and ("Sign in to confirm" in last_error_msg or "bot" in last_error_msg.lower()):
                 return {
                     'success': False,
                     'data': None,
                     'error_type': 'bot_block',
                     'error_msg': "YouTube exige une authentification pour vérifier l'accès (détection de bot)."
                 }
-            return {'success': False, 'data': None, 'error_type': 'error', 'error_msg': f"Erreur YouTube: {err_str}"}
+
+            return {'success': False, 'data': None, 'error_type': 'not_found', 'error_msg': last_error_msg or "Aucun résultat trouvé."}
+
         except Exception as e:
-            logger.error(f"Erreur recherche YouTube: {e}", exc_info=True)
+            logger.error(f"Erreur globale recherche YouTube: {e}", exc_info=True)
             return {'success': False, 'data': None, 'error_type': 'error', 'error_msg': str(e)}
 
     async def extract_spotify_info(self, url: str) -> Optional[Dict[str, Any]]:
