@@ -98,7 +98,7 @@ class RymBot(commands.Bot):
                 existing = discord.utils.get(guild.voice_channels, name="One tap")
                 if not existing:
                     await guild.create_voice_channel(
-                        name="One tap",
+                        name="➕One tap",
                         reason="Salon de création de rooms temporaires RymBot"
                     )
                     logger.info(f"✅ Salon 'One tap' créé sur {guild.name}")
@@ -247,7 +247,7 @@ class RymBot(commands.Bot):
                 color=discord.Color.from_rgb(157, 78, 221),
                 thumbnail_url=avatar_url,
                 guild=guild,
-                footer_text="RymBot • Bot Discord Professionnel"
+                footer_text="RymBot • Developped by Naythan"
             )
             view = VoiceRoomControlView()
             await channel.send(embed=embed, view=view)

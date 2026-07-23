@@ -32,7 +32,7 @@ class VoiceCog(commands.Cog, name="Voice"):
             
         return channel
 
-    @commands.hybrid_command(name='der', description="Définit le nombre d'utilisateurs max dans la room (1-99)")
+    @commands.hybrid_command(name='limit', description="Définit le nombre d'utilisateurs max dans la room (1-99)")
     async def set_user_limit(self, ctx: commands.Context, limit: int):
         channel = await self._check_room_owner(ctx)
         if not channel:
@@ -209,6 +209,94 @@ class VoiceCog(commands.Cog, name="Voice"):
         await channel.edit(bitrate=bitrate * 1000)
         embed = EmbedFactory.success("Qualité Audio", f"📊 Bitrate défini à **{bitrate} kbps**.", guild=ctx.guild)
         await ctx.send(embed=embed)
+
+    def _find_member(self, guild: discord.Guild, query: str) -> Optional[discord.Member]:
+        """Trouve un membre par Mention, ID, Username ou Display Name sur le serveur"""
+        if not query:
+            return None
+            
+        import re
+        query_clean = query.strip()
+        
+        # 1. Extraction d'un ID numérique (ex: <@123456789>, <@!123456789>, ou 123456789)
+        id_match = re.search(r'\d{17,20}', query_clean)
+        if id_match:
+            member_id = int(id_match.group(0))
+            member = guild.get_member(member_id)
+            if member:
+                return member
+
+        # 2. Match exact pseudo / nom d'utilisateur / Tag
+        query_lower = query_clean.lower()
+        for member in guild.members:
+            if (member.name.lower() == query_lower or 
+                member.display_name.lower() == query_lower or 
+                str(member).lower() == query_lower):
+                return member
+
+        # 3. Match partiel (début de nom)
+        for member in guild.members:
+            if (member.display_name.lower().startswith(query_lower) or 
+                member.name.lower().startswith(query_lower)):
+                return member
+
+        # 4. Match sous-chaîne
+        for member in guild.members:
+            if (query_lower in member.display_name.lower() or 
+                query_lower in member.name.lower()):
+                return member
+
+        return None
+
+    @commands.hybrid_command(name='aji', aliases=['move', 'deplace', 'come'], description="Déplace un membre dans votre salon vocal par Mention, ID ou Nom")
+    async def aji_cmd(self, ctx: commands.Context, *, target: str):
+        """Déplace un membre spécifié (Mention, ID ou Nom d'utilisateur) vers votre salon vocal"""
+        # Vérifier que l'auteur est connecté dans un salon vocal
+        if not ctx.author.voice or not ctx.author.voice.channel:
+            embed = EmbedFactory.error("Erreur Vocal", "❌ Vous devez être connecté à un salon vocal.", guild=ctx.guild)
+            return await ctx.send(embed=embed)
+
+        channel = ctx.author.voice.channel
+        
+        # Si c'est une room temporaire, s'assurer que l'auteur en est le propriétaire
+        if Permissions.is_temp_room(self.bot, channel.id):
+            if not Permissions.is_room_owner(self.bot, channel.id, ctx.author.id):
+                embed = EmbedFactory.error("Permission Refusée", "❌ Vous n'êtes pas le propriétaire de cette room.", guild=ctx.guild)
+                return await ctx.send(embed=embed)
+
+        # Recherche du membre cible
+        member = self._find_member(ctx.guild, target)
+        if not member:
+            embed = EmbedFactory.error("Membre Introuvable", f"❌ Impossible de trouver `{target}` sur ce serveur (ID, Mention ou Pseudo invalide).", guild=ctx.guild)
+            return await ctx.send(embed=embed)
+
+        if member.id == ctx.author.id:
+            embed = EmbedFactory.error("Erreur", "❌ Vous êtes déjà dans votre salon vocal.", guild=ctx.guild)
+            return await ctx.send(embed=embed)
+
+        if not member.voice or not member.voice.channel:
+            embed = EmbedFactory.error("Membre Non Connecté", f"❌ {member.mention} n'est connecté à aucun salon vocal.", guild=ctx.guild)
+            return await ctx.send(embed=embed)
+
+        if member.voice.channel.id == channel.id:
+            embed = EmbedFactory.info("Déjà Présent", f"ℹ️ {member.mention} est déjà dans votre salon vocal.", guild=ctx.guild)
+            return await ctx.send(embed=embed)
+
+        try:
+            from_channel = member.voice.channel
+            await member.move_to(channel, reason=f"Déplacé par {ctx.author.display_name} via .aji")
+            embed = EmbedFactory.success(
+                "Déplacement Réussi",
+                f"➡️ **{member.display_name}** ({member.mention}) a été déplacé de `{from_channel.name}` vers **{channel.name}** !",
+                guild=ctx.guild
+            )
+            await ctx.send(embed=embed)
+        except discord.Forbidden:
+            embed = EmbedFactory.error("Permission Bot Insuffisante", "❌ Le bot nécessite la permission de déplacer les membres (*Deplacer les membres*).", guild=ctx.guild)
+            await ctx.send(embed=embed)
+        except Exception as e:
+            embed = EmbedFactory.error("Erreur Déplacement", f"❌ Impossible de déplacer le membre : {str(e)}", guild=ctx.guild)
+            await ctx.send(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(VoiceCog(bot))
