@@ -85,16 +85,23 @@ class RymBot(commands.Bot):
         logger.info("🚀 RymBot prêt à fonctionner !")
 
     async def create_default_channels(self):
-        """Vérifie et crée le salon 'Join der dark' sur chaque serveur"""
+        """Vérifie et crée le salon 'One tap' sur chaque serveur"""
         for guild in self.guilds:
             try:
-                existing = discord.utils.get(guild.voice_channels, name="Join der dark")
+                # Si un ancien salon "Join der dark" existe encore, on le renomme
+                old_channel = discord.utils.get(guild.voice_channels, name="Join der dark")
+                if old_channel:
+                    await old_channel.edit(name="One tap", reason="Mise à jour du salon générateur")
+                    logger.info(f"✏️ Salon 'Join der dark' renommé en 'One tap' sur {guild.name}")
+                    continue
+
+                existing = discord.utils.get(guild.voice_channels, name="One tap")
                 if not existing:
                     await guild.create_voice_channel(
-                        name="Join der dark",
+                        name="One tap",
                         reason="Salon de création de rooms temporaires RymBot"
                     )
-                    logger.info(f"✅ Salon 'Join der dark' créé sur {guild.name}")
+                    logger.info(f"✅ Salon 'One tap' créé sur {guild.name}")
             except discord.Forbidden:
                 logger.warning(f"⚠️ Permissions insuffisantes sur {guild.name} pour créer le salon vocal.")
             except Exception as e:
@@ -147,13 +154,13 @@ class RymBot(commands.Bot):
             
         try:
             guild = member.guild
-            # Salon générateur "Join der dark"
-            create_room = discord.utils.get(guild.voice_channels, name="Join der dark")
+            # Salon générateur "One tap"
+            create_room = discord.utils.get(guild.voice_channels, name="One tap") or discord.utils.get(guild.voice_channels, name="Join der dark")
             
             if not create_room:
                 try:
                     create_room = await guild.create_voice_channel(
-                        name="Join der dark",
+                        name="One tap",
                         reason="Création automatique du salon générateur"
                     )
                 except Exception:

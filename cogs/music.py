@@ -41,6 +41,19 @@ def get_cookies_path() -> Optional[str]:
 
     return None
 
+def get_ffmpeg_executable() -> str:
+    """Trouve l'exécutable FFmpeg du système ou utilise le binaire static imageio_ffmpeg."""
+    import shutil
+    sys_ffmpeg = shutil.which("ffmpeg")
+    if sys_ffmpeg:
+        return sys_ffmpeg
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception as e:
+        logger.warning(f"Impossible d'obtenir imageio_ffmpeg: {e}")
+        return "ffmpeg"
+
 class MusicCog(commands.Cog, name="Musique"):
     """Cog complet et sécurisé pour le système de musique (YouTube & Spotify)"""
 
@@ -582,9 +595,11 @@ class MusicCog(commands.Cog, name="Musique"):
                 "-probesize 10000000 -analyzeduration 10000000"
             )
             ffmpeg_options = "-vn"
+            ffmpeg_executable = get_ffmpeg_executable()
 
             source = discord.FFmpegPCMAudio(
                 audio_url,
+                executable=ffmpeg_executable,
                 before_options=ffmpeg_before_options,
                 options=ffmpeg_options
             )

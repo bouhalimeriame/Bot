@@ -7,3 +7,4 @@ MISE_PYTHON_GITHUB_ATTESTATIONS = "false"
 
 [phases.setup]
 nixPkgs = ["ffmpeg", "libsodium"]
+aptPkgs = ["ffmpeg", "libsodium"]
