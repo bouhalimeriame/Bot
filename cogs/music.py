@@ -1,17 +1,49 @@
 # cogs/music.py
+import os
+import re
+import logging
+import asyncio
+from typing import Optional, Dict, List, Any
+import aiohttp
 import discord
 from discord.ext import commands
 import yt_dlp
-import asyncio
-from typing import Optional, Dict, List
-import aiohttp
 
 from utils.embeds import EmbedFactory
 from views.music_view import MusicControlView
 
+logger = logging.getLogger(__name__)
+
+def get_cookies_path() -> Optional[str]:
+    """Détecte ou génère un fichier cookies.txt pour yt-dlp."""
+    cookie_path = os.getenv('COOKIES_FILE') or os.getenv('YOUTUBE_COOKIES_PATH') or 'cookies.txt'
+    if os.path.exists(cookie_path) and os.path.getsize(cookie_path) > 0:
+        logger.info(f"🍪 Cookies YouTube détectés sur le disque: {cookie_path}")
+        return cookie_path
+
+    raw_cookies = os.getenv('YOUTUBE_COOKIES')
+    b64_cookies = os.getenv('YOUTUBE_COOKIES_BASE64')
+
+    if raw_cookies or b64_cookies:
+        try:
+            content = raw_cookies
+            if b64_cookies:
+                import base64
+                content = base64.b64decode(b64_cookies).decode('utf-8')
+
+            target_path = 'cookies.txt'
+            with open(target_path, 'w', encoding='utf-8') as f:
+                f.write(content.strip())
+            logger.info(f"🍪 Fichier cookies.txt créé avec succès via l'environnement -> {target_path}")
+            return target_path
+        except Exception as e:
+            logger.error(f"❌ Erreur lors de la création de cookies.txt: {e}")
+
+    return None
+
 class MusicCog(commands.Cog, name="Musique"):
-    """Cog complet pour le système de musique (YouTube & Spotify)"""
-    
+    """Cog complet et sécurisé pour le système de musique (YouTube & Spotify)"""
+
     def __init__(self, bot):
         self.bot = bot
         self.queue: Dict[int, List[Dict]] = {}
@@ -19,98 +51,186 @@ class MusicCog(commands.Cog, name="Musique"):
         self.voice_clients: Dict[int, discord.VoiceClient] = {}
         self.loop: Dict[int, bool] = {}
         self.volume: Dict[int, int] = {}
-        
-        self.ytdl_opts = {
+
+        cookie_file = get_cookies_path()
+
+        self.ytdl_opts: Dict[str, Any] = {
             'format': 'bestaudio/best',
             'quiet': True,
             'no_warnings': True,
             'ignoreerrors': True,
             'default_search': 'ytsearch',
             'source_address': '0.0.0.0',
+            'nocheckcertificate': True,
+            'noplaylist': True,
+            'cachedir': False,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['ios', 'android', 'mweb', 'web']
+                }
+            },
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
             }
         }
+
+        if cookie_file:
+            self.ytdl_opts['cookiefile'] = cookie_file
+
         self.ytdl = yt_dlp.YoutubeDL(self.ytdl_opts)
 
-    async def search_youtube(self, query: str) -> Optional[Dict]:
-        """Recherche une vidéo ou lien sur YouTube"""
+    async def search_youtube(self, query: str) -> Dict[str, Any]:
+        """
+        Recherche une vidéo ou un lien sur YouTube avec gestion stricte d'erreurs.
+        Garantit de ne jamais lever 'NoneType' object has no attribute 'get'.
+        """
         try:
             loop = asyncio.get_event_loop()
-            search_query = query if query.startswith('http') else f"ytsearch:{query}"
-            
+
+            if query.startswith(('http://', 'https://')):
+                search_query = query
+            else:
+                search_query = f"ytsearch:{query}"
+
             data = await loop.run_in_executor(
                 None, lambda: self.ytdl.extract_info(search_query, download=False)
             )
-            
+
             if not data:
-                return None
-                
-            if 'entries' in data:
-                if not data['entries']:
-                    return None
-                entry = data['entries'][0]
-            else:
-                entry = data
-                
-            return {
-                'title': entry.get('title', 'Inconnu'),
-                'url': entry.get('webpage_url', ''),
-                'audio_url': entry.get('url', ''),
-                'duration': entry.get('duration', 0),
-                'thumbnail': entry.get('thumbnail', ''),
-                'uploader': entry.get('uploader', 'Artiste Inconnu'),
+                return {'success': False, 'data': None, 'error_type': 'not_found', 'error_msg': "Aucune donnée retournée par YouTube."}
+
+            entry = None
+            if isinstance(data, dict):
+                if 'entries' in data:
+                    # Filtre rigoureux contre les éléments None générés par ignoreerrors
+                    entries = [e for e in data['entries'] if isinstance(e, dict)]
+                    if not entries:
+                        return {'success': False, 'data': None, 'error_type': 'not_found', 'error_msg': "Aucun résultat valide trouvé dans la recherche."}
+                    entry = entries[0]
+                else:
+                    entry = data
+
+            if not entry or not isinstance(entry, dict):
+                return {'success': False, 'data': None, 'error_type': 'not_found', 'error_msg': "Format de résultat invalide."}
+
+            # Extraction sécurisée des champs sans risque d'erreur NoneType
+            title = entry.get('title') or 'Titre Inconnu'
+            webpage_url = entry.get('webpage_url') or entry.get('url') or query
+
+            audio_url = entry.get('url')
+            if not audio_url and 'formats' in entry and isinstance(entry['formats'], list):
+                formats = [f for f in entry['formats'] if isinstance(f, dict) and f.get('acodec') != 'none' and f.get('url')]
+                if formats:
+                    best_format = max(formats, key=lambda f: f.get('abr') or f.get('tbr') or 0)
+                    audio_url = best_format.get('url')
+
+            if not audio_url:
+                audio_url = webpage_url
+
+            duration = entry.get('duration') or 0
+
+            thumbnail = entry.get('thumbnail') or ''
+            if not thumbnail and entry.get('thumbnails') and isinstance(entry['thumbnails'], list):
+                valid_thumbs = [t for t in entry['thumbnails'] if isinstance(t, dict) and t.get('url')]
+                if valid_thumbs:
+                    thumbnail = valid_thumbs[-1]['url']
+
+            uploader = entry.get('uploader') or entry.get('channel') or 'Artiste Inconnu'
+
+            song_info = {
+                'title': title,
+                'url': webpage_url,
+                'audio_url': audio_url,
+                'duration': duration,
+                'thumbnail': thumbnail,
+                'uploader': uploader,
                 'source': 'youtube'
             }
-        except Exception as e:
-            print(f"Erreur recherche YouTube: {e}")
-            return None
 
-    async def extract_spotify_info(self, url: str) -> Optional[Dict]:
-        """Extrait les informations d'un lien Spotify (Official oEmbed + OpenGraph)"""
+            return {'success': True, 'data': song_info, 'error_type': None, 'error_msg': None}
+
+        except yt_dlp.utils.DownloadError as e:
+            err_str = str(e)
+            logger.error(f"DownloadError YouTube: {err_str}")
+            if "Sign in to confirm" in err_str or "bot" in err_str.lower():
+                return {
+                    'success': False,
+                    'data': None,
+                    'error_type': 'bot_block',
+                    'error_msg': "YouTube exige une authentification pour vérifier l'accès (détection de bot)."
+                }
+            return {'success': False, 'data': None, 'error_type': 'error', 'error_msg': f"Erreur YouTube: {err_str}"}
+        except Exception as e:
+            logger.error(f"Erreur recherche YouTube: {e}", exc_info=True)
+            return {'success': False, 'data': None, 'error_type': 'error', 'error_msg': str(e)}
+
+    async def extract_spotify_info(self, url: str) -> Optional[Dict[str, Any]]:
+        """Extrait les informations d'un lien Spotify (oEmbed API + OpenGraph parsing)"""
         try:
             clean_url = url.split('?')[0]
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7'
+            }
+
             async with aiohttp.ClientSession() as session:
-                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-                
+                track_title = ""
+                artist_name = ""
+                thumbnail = ""
+
                 # 1. API officielle Spotify oEmbed
                 oembed_url = f"https://open.spotify.com/oembed?url={clean_url}"
-                async with session.get(oembed_url, headers=headers) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        if data and 'title' in data:
-                            track_title = data.get('title', '')
-                            thumbnail = data.get('thumbnail_url', '')
-                            
-                            # 2. Extraction du nom de l'artiste via la description OpenGraph
-                            artist_name = ""
-                            try:
-                                async with session.get(clean_url, headers=headers) as page_res:
-                                    if page_res.status == 200:
-                                        html = await page_res.text()
-                                        import re
-                                        desc_match = re.search(r'<meta property="og:description" content="([^"]+)"', html)
-                                        if desc_match:
-                                            desc_text = desc_match.group(1)
-                                            parts = [p.strip() for p in desc_text.replace('·', '•').split('•')]
-                                            if len(parts) >= 2:
-                                                artist_name = parts[0]
-                            except Exception as e:
-                                print(f"Erreur extraction artiste Spotify: {e}")
+                try:
+                    async with session.get(oembed_url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            if data and 'title' in data:
+                                track_title = data.get('title', '').strip()
+                                thumbnail = data.get('thumbnail_url', '')
+                except Exception as e:
+                    logger.warning(f"Spotify oEmbed fallback: {e}")
 
-                            full_title = f"{track_title} - {artist_name}" if artist_name else track_title
-                            search_query = f"{track_title} {artist_name} audio" if artist_name else f"{track_title} audio"
+                # 2. Parsing HTML OpenGraph
+                try:
+                    async with session.get(clean_url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as page_res:
+                        if page_res.status == 200:
+                            html = await page_res.text()
 
-                            return {
-                                'title': full_title,
-                                'query': search_query,
-                                'thumbnail': thumbnail,
-                                'artist': artist_name or "Spotify",
-                                'album': ""
-                            }
-            return None
+                            if not track_title:
+                                og_title = re.search(r'<meta property="og:title" content="([^"]+)"', html)
+                                if og_title:
+                                    track_title = og_title.group(1).strip()
+
+                            if not thumbnail:
+                                og_img = re.search(r'<meta property="og:image" content="([^"]+)"', html)
+                                if og_img:
+                                    thumbnail = og_img.group(1).strip()
+
+                            og_desc = re.search(r'<meta property="og:description" content="([^"]+)"', html)
+                            if og_desc:
+                                desc_text = og_desc.group(1)
+                                parts = [p.strip() for p in desc_text.replace('·', '•').replace('-', '•').split('•')]
+                                if len(parts) >= 1 and parts[0] != track_title:
+                                    artist_name = parts[0]
+                except Exception as e:
+                    logger.warning(f"Spotify HTML parsing fallback: {e}")
+
+                if not track_title:
+                    return None
+
+                full_title = f"{track_title} - {artist_name}" if (artist_name and artist_name.lower() not in track_title.lower()) else track_title
+                search_query = f"{track_title} {artist_name} audio" if artist_name else f"{track_title} audio"
+
+                return {
+                    'title': full_title,
+                    'query': search_query,
+                    'thumbnail': thumbnail,
+                    'artist': artist_name or "Spotify",
+                }
         except Exception as e:
-            print(f"Erreur extraction Spotify: {e}")
+            logger.error(f"Erreur extraction Spotify: {e}")
             return None
 
     async def ensure_voice(self, ctx: commands.Context) -> Optional[discord.VoiceClient]:
@@ -119,9 +239,9 @@ class MusicCog(commands.Cog, name="Musique"):
             embed = EmbedFactory.error("Erreur Vocal", "❌ Vous devez être connecté à un salon vocal.", guild=ctx.guild)
             await ctx.send(embed=embed)
             return None
-            
+
         target_channel = ctx.author.voice.channel
-        
+
         if ctx.voice_client is None:
             vc = await target_channel.connect()
             self.voice_clients[ctx.guild.id] = vc
@@ -156,7 +276,7 @@ class MusicCog(commands.Cog, name="Musique"):
 
     @commands.hybrid_command(name='play', description="Recherche et joue une musique (YouTube ou Spotify)")
     async def play(self, ctx: commands.Context, *, query: str):
-        """Recherche et ajoute une musique à la file"""
+        """Recherche et ajoute une musique à la file d'attente"""
         vc = await self.ensure_voice(ctx)
         if not vc:
             return
@@ -170,19 +290,29 @@ class MusicCog(commands.Cog, name="Musique"):
         if is_spotify:
             spotify_info = await self.extract_spotify_info(query)
             if spotify_info:
-                # Recherche YouTube avec le titre+artiste extrait de Spotify
-                song = await self.search_youtube(spotify_info['query'])
-                if song:
-                    song['spotify_info'] = spotify_info
+                res = await self.search_youtube(spotify_info['query'])
+                if res['success'] and res['data']:
+                    song = res['data']
                     song['title'] = spotify_info['title']
                     if spotify_info.get('thumbnail'):
                         song['thumbnail'] = spotify_info['thumbnail']
+                elif res['error_type'] == 'bot_block':
+                    embed_err = EmbedFactory.error(
+                        "YouTube — Authentification Requise",
+                        "⚠️ YouTube a bloqué la requête (détection de bot sur le serveur d'hébergement).\n\n"
+                        "**Solution :** Configurez la variable `YOUTUBE_COOKIES` sur Railway ou fournissez un fichier `cookies.txt`.",
+                        guild=ctx.guild
+                    )
+                    if isinstance(loading_msg, discord.Message):
+                        return await loading_msg.edit(embed=embed_err)
+                    else:
+                        return await ctx.send(embed=embed_err)
+
             if not song:
-                # Spotify est protégé par DRM — on n'envoie jamais l'URL Spotify à yt-dlp
                 embed_err = EmbedFactory.error(
-                    "Spotify — Aucun résultat",
-                    "❌ Impossible de récupérer ce morceau Spotify.\n"
-                    "Essaie plutôt de coller le **nom de la chanson et l'artiste** directement.",
+                    "Spotify — Morceau Introuvable",
+                    "❌ Impossible de trouver ce morceau sur YouTube.\n"
+                    "💡 **Conseil :** Essayez d'indiquer directement le **nom du morceau et l'artiste**.",
                     guild=ctx.guild
                 )
                 if isinstance(loading_msg, discord.Message):
@@ -190,23 +320,40 @@ class MusicCog(commands.Cog, name="Musique"):
                 else:
                     return await ctx.send(embed=embed_err)
         else:
-            # Requête texte ou URL YouTube classique
-            song = await self.search_youtube(query)
-
-        if not song:
-            embed_err = EmbedFactory.error("Aucun résultat", "❌ Aucun morceau correspondant n'a été trouvé.", guild=ctx.guild)
-            if isinstance(loading_msg, discord.Message):
-                return await loading_msg.edit(embed=embed_err)
+            res = await self.search_youtube(query)
+            if res['success'] and res['data']:
+                song = res['data']
+            elif res['error_type'] == 'bot_block':
+                embed_err = EmbedFactory.error(
+                    "YouTube — Détection de Bot",
+                    "❌ YouTube bloque l'accès automatique depuis ce serveur d'hébergement.\n\n"
+                    "**Solutions :**\n"
+                    "1. Ajoutez la variable d'environnement `YOUTUBE_COOKIES` dans Railway avec vos cookies YouTube.\n"
+                    "2. Ou ajoutez un fichier `cookies.txt` à la racine du projet.\n"
+                    "3. Ou essayez avec un nom de titre précis au lieu d'une URL.",
+                    guild=ctx.guild
+                )
+                if isinstance(loading_msg, discord.Message):
+                    return await loading_msg.edit(embed=embed_err)
+                else:
+                    return await ctx.send(embed=embed_err)
             else:
-                return await ctx.send(embed=embed_err)
+                embed_err = EmbedFactory.error(
+                    "Morceau Introuvable",
+                    f"❌ Aucun morceau correspondant à `{query}` n'a été trouvé.",
+                    guild=ctx.guild
+                )
+                if isinstance(loading_msg, discord.Message):
+                    return await loading_msg.edit(embed=embed_err)
+                else:
+                    return await ctx.send(embed=embed_err)
 
         song['requester'] = ctx.author
 
         if ctx.guild.id not in self.queue:
             self.queue[ctx.guild.id] = []
-            
+
         self.queue[ctx.guild.id].append(song)
-        
         position = len(self.queue[ctx.guild.id])
 
         if not vc.is_playing() and not vc.is_paused():
@@ -217,7 +364,7 @@ class MusicCog(commands.Cog, name="Musique"):
         else:
             mins, secs = divmod(song.get('duration', 0), 60)
             dur_str = f"{mins}:{secs:02d}" if song.get('duration', 0) > 0 else "Live"
-            
+
             embed_added = EmbedFactory.build(
                 title="📝 Ajoutée à la file d'attente",
                 description=f"**[{song['title']}]({song['url']})**",
@@ -239,7 +386,7 @@ class MusicCog(commands.Cog, name="Musique"):
         if not ctx.voice_client or not ctx.voice_client.is_playing():
             embed = EmbedFactory.error("Erreur", "❌ Aucune musique en cours d'exécution.", guild=ctx.guild)
             return await ctx.send(embed=embed)
-            
+
         ctx.voice_client.pause()
         embed = EmbedFactory.info("Pause", "⏸️ La musique a été mise en pause.", guild=ctx.guild)
         await ctx.send(embed=embed)
@@ -249,7 +396,7 @@ class MusicCog(commands.Cog, name="Musique"):
         if not ctx.voice_client or not ctx.voice_client.is_paused():
             embed = EmbedFactory.error("Erreur", "❌ Aucune musique en pause.", guild=ctx.guild)
             return await ctx.send(embed=embed)
-            
+
         ctx.voice_client.resume()
         embed = EmbedFactory.success("Reprise", "▶️ Reprise de la musique.", guild=ctx.guild)
         await ctx.send(embed=embed)
@@ -259,7 +406,7 @@ class MusicCog(commands.Cog, name="Musique"):
         if not ctx.voice_client or not (ctx.voice_client.is_playing() or ctx.voice_client.is_paused()):
             embed = EmbedFactory.error("Erreur", "❌ Aucune musique à passer.", guild=ctx.guild)
             return await ctx.send(embed=embed)
-            
+
         ctx.voice_client.stop()
         embed = EmbedFactory.success("Passage", "⏭️ Passage au morceau suivant...", guild=ctx.guild)
         await ctx.send(embed=embed)
@@ -268,12 +415,12 @@ class MusicCog(commands.Cog, name="Musique"):
     async def stop(self, ctx: commands.Context):
         if ctx.guild.id in self.queue:
             self.queue[ctx.guild.id].clear()
-            
+
         if ctx.voice_client:
             ctx.voice_client.stop()
             await ctx.voice_client.disconnect()
             self.voice_clients.pop(ctx.guild.id, None)
-            
+
         self.now_playing.pop(ctx.guild.id, None)
         embed = EmbedFactory.warning("Arrêt Musique", "⏹️ Musique arrêtée et file d'attente vidée.", guild=ctx.guild)
         await ctx.send(embed=embed)
@@ -284,19 +431,19 @@ class MusicCog(commands.Cog, name="Musique"):
         if not queue_list:
             embed = EmbedFactory.info("File d'attente", "📋 La file d'attente est vide.", guild=ctx.guild)
             return await ctx.send(embed=embed)
-            
+
         fields = []
         for idx, song in enumerate(queue_list[:10], start=1):
             dur = song.get('duration', 0)
             mins, secs = divmod(dur, 60)
             dur_str = f"{mins}:{secs:02d}" if dur > 0 else "Live"
-            req = song['requester'].display_name
+            req = song['requester'].display_name if hasattr(song.get('requester'), 'display_name') else str(song.get('requester', 'Membre'))
             fields.append({
                 'name': f"{idx}. {song['title'][:45]}",
                 'value': f"⏱️ `{dur_str}` | Par: **{req}**",
                 'inline': False
             })
-            
+
         embed = EmbedFactory.build(
             title="📋 File d'attente actuelle",
             color='music',
@@ -311,21 +458,23 @@ class MusicCog(commands.Cog, name="Musique"):
         if not ctx.voice_client or not (ctx.voice_client.is_playing() or ctx.voice_client.is_paused()):
             embed = EmbedFactory.error("Erreur", "❌ Aucune musique en cours de lecture.", guild=ctx.guild)
             return await ctx.send(embed=embed)
-            
+
         song = self.now_playing.get(ctx.guild.id)
         if not song:
             embed = EmbedFactory.info("Musique", "🎵 Une musique est en cours de lecture.", guild=ctx.guild)
             return await ctx.send(embed=embed)
-            
+
         mins, secs = divmod(song.get('duration', 0), 60)
         dur_str = f"{mins}:{secs:02d}" if song.get('duration', 0) > 0 else "Live"
-        
+
+        req_mention = song['requester'].mention if 'requester' in song and hasattr(song['requester'], 'mention') else "Inconnu"
+
         fields = [
             {'name': "Auteur / Chaîne", 'value': song.get('uploader', 'Inconnu'), 'inline': True},
             {'name': "Durée", 'value': f"`{dur_str}`", 'inline': True},
-            {'name': "Demandé par", 'value': song['requester'].mention, 'inline': True}
+            {'name': "Demandé par", 'value': req_mention, 'inline': True}
         ]
-        
+
         embed = EmbedFactory.build(
             title="🎵 Maintenant en lecture",
             description=f"**[{song['title']}]({song['url']})**",
@@ -351,11 +500,11 @@ class MusicCog(commands.Cog, name="Musique"):
         if volume < 0 or volume > 100:
             embed = EmbedFactory.error("Erreur Volume", "❌ Le volume doit être compris entre 0 et 100.", guild=ctx.guild)
             return await ctx.send(embed=embed)
-            
+
         if not ctx.voice_client or not ctx.voice_client.source:
             embed = EmbedFactory.error("Erreur", "❌ Aucune source audio en cours.", guild=ctx.guild)
             return await ctx.send(embed=embed)
-            
+
         ctx.voice_client.source.volume = volume / 100.0
         self.volume[ctx.guild.id] = volume
         embed = EmbedFactory.success("Volume", f"🔊 Volume réglé à **{volume}%**.", guild=ctx.guild)
@@ -379,11 +528,11 @@ class MusicCog(commands.Cog, name="Musique"):
                 song = self.now_playing[ctx.guild.id]
                 await self._play_audio(ctx, song)
                 return
-                
+
         if ctx.guild.id not in self.queue or not self.queue[ctx.guild.id]:
             self.now_playing.pop(ctx.guild.id, None)
             return
-            
+
         song = self.queue[ctx.guild.id].pop(0)
         await self._play_audio(ctx, song)
 
@@ -393,40 +542,47 @@ class MusicCog(commands.Cog, name="Musique"):
             vc = ctx.voice_client
             if not vc:
                 return
-                
+
             audio_url = song.get('audio_url')
-            if not audio_url:
-                search_data = await self.search_youtube(song['title'])
-                if search_data:
-                    audio_url = search_data.get('audio_url')
+            if not audio_url or not audio_url.startswith('http'):
+                search_res = await self.search_youtube(song['title'])
+                if search_res['success'] and search_res['data']:
+                    audio_url = search_res['data'].get('audio_url')
 
             if not audio_url:
-                embed = EmbedFactory.error("Erreur Audio", f"❌ Impossible de lire l'audio de **{song['title']}**.", guild=ctx.guild)
+                embed = EmbedFactory.error("Erreur Audio", f"❌ Impossible d'extraire l'audio pour **{song['title']}**.", guild=ctx.guild)
                 await ctx.send(embed=embed)
                 return await self.play_next(ctx)
 
+            ffmpeg_before_options = (
+                "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
+                "-probesize 10000000 -analyzeduration 10000000"
+            )
+            ffmpeg_options = "-vn"
+
             source = discord.FFmpegPCMAudio(
                 audio_url,
-                before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-                options="-vn"
+                before_options=ffmpeg_before_options,
+                options=ffmpeg_options
             )
-            
+
             vol_val = self.volume.get(ctx.guild.id, 50) / 100.0
             transformed_source = discord.PCMVolumeTransformer(source, volume=vol_val)
 
             def after_playing(error):
                 if error:
-                    print(f"Erreur lecture audio: {error}")
+                    logger.error(f"Erreur lecture audio FFmpeg: {error}")
                 fut = self.play_next(ctx)
                 asyncio.run_coroutine_threadsafe(fut, self.bot.loop)
 
             vc.play(transformed_source, after=after_playing)
             self.now_playing[ctx.guild.id] = song
 
-            # Affichage de l'embed Now Playing avec boutons de contrôle
             mins, secs = divmod(song.get('duration', 0), 60)
             dur_str = f"{mins}:{secs:02d}" if song.get('duration', 0) > 0 else "Live"
-            
+
+            req_mention = song['requester'].mention if 'requester' in song and hasattr(song['requester'], 'mention') else "Inconnu"
+
             embed = EmbedFactory.build(
                 title="▶️ Maintenant en lecture",
                 description=f"**[{song['title']}]({song['url']})**",
@@ -435,7 +591,7 @@ class MusicCog(commands.Cog, name="Musique"):
                 fields=[
                     {'name': "Auteur", 'value': song.get('uploader', 'Inconnu'), 'inline': True},
                     {'name': "Durée", 'value': f"`{dur_str}`", 'inline': True},
-                    {'name': "Demandé par", 'value': song['requester'].mention, 'inline': True}
+                    {'name': "Demandé par", 'value': req_mention, 'inline': True}
                 ],
                 guild=ctx.guild,
                 bot_user=self.bot.user
@@ -444,7 +600,8 @@ class MusicCog(commands.Cog, name="Musique"):
             await ctx.send(embed=embed, view=view)
 
         except Exception as e:
-            embed = EmbedFactory.error("Erreur de lecture", f"Une erreur est survenue: {str(e)}", guild=ctx.guild)
+            logger.error(f"Erreur lors du lancement audio: {e}", exc_info=True)
+            embed = EmbedFactory.error("Erreur de lecture", f"Une erreur audio est survenue : {str(e)}", guild=ctx.guild)
             await ctx.send(embed=embed)
             await self.play_next(ctx)
 
